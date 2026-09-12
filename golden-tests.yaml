@@ -1,0 +1,424 @@
+# 판정 엔진 골든 테스트 (시드)
+#
+# 위치: packages/eligibility/__tests__/golden/ 로 옮겨 사용
+# 규칙: 규칙 타입마다 최소 3케이스 (가능 / 불가 / 경계). UNKNOWN 케이스 필수.
+#       목표 100케이스, 정확도 95% 미만이면 배포 금지 (CLAUDE.md 6장)
+#
+# ⚠️ 현재 visa_rules 시드는 18건 중 13건이 confidence='low'다.
+#    따라서 아래 케이스 다수가 지금은 UNKNOWN을 반환한다 (설계대로다).
+#    지침 원문 대조 후 confidence를 올리면 expect를 갱신한다.
+#    → expect_with_low_confidence / expect_when_verified 두 필드를 함께 둔다.
+
+meta:
+  engineVersion: "1.0.0"
+  rulesetDate: "2026-07-09"
+  evaluatedAt: "2026-09-12"
+
+cases:
+
+# ─────────────────────────────────────────────────────────────
+#  WEEKLY_HOUR_CAP
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-HOURS-001
+  description: 학사 3학년 TOPIK4, 잔여 15시간, 12시간 공고 → 가능
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 15
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 8
+  expect_when_verified:
+    status: ELIGIBLE
+    remainingHours: 15
+  expect_with_low_confidence:
+    status: UNKNOWN
+    reasonCodes: [LOW_CONFIDENCE_RULE]
+
+- id: D2-HOURS-002
+  description: 학사 3학년 TOPIK4, 현재 25시간, 10시간 공고 → 상한 30 초과로 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 25
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 10
+    commuteMinutes: 8
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [WEEKLY_HOUR_EXCEEDED]
+    remainingHours: 5
+
+- id: D2-HOURS-003
+  description: 경계값 — 현재 20시간 + 10시간 공고 = 정확히 상한 30 → 가능
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 20
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 10
+    commuteMinutes: 8
+  expect_when_verified:
+    status: ELIGIBLE
+  note: 상한은 초과(>) 기준이며 동일값(=)은 허용. 부등호 방향 회귀 방지용
+
+- id: D2-HOURS-004-UNKNOWN
+  description: 공고에 주당 시간이 없음 → 판단 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 10
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: null
+    missingFields: ["weekly_hours_max"]
+    commuteMinutes: 8
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_POSTING_FIELD]
+  note: 결측을 통과시켜 ELIGIBLE을 내면 안 된다 (L4)
+
+- id: D4-HOURS-001
+  description: D-4 TOPIK2, 상한 20시간, 25시간 공고 → 불가
+  profile:
+    visa: D4
+    degreeLevel: LANGUAGE
+    koreanProficiency: TOPIK2
+    permittedWeeklyHours: 20
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 25
+    commuteMinutes: 15
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [WEEKLY_HOUR_EXCEEDED]
+
+# ─────────────────────────────────────────────────────────────
+#  INDUSTRY_DENY
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-INDUSTRY-001
+  description: 제조업(C29) + TOPIK3 → 불가 (4급 예외 미충족)
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK3
+    permittedWeeklyHours: 10
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "C29"
+    employmentForm: DIRECT
+    weeklyHoursMax: 8
+    commuteMinutes: 20
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [INDUSTRY_DENIED_MANUFACTURING]
+
+- id: D2-INDUSTRY-002
+  description: 제조업 + TOPIK4 → 예외 심사 대상. 단정 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "C29"
+    employmentForm: DIRECT
+    weeklyHoursMax: 20
+    commuteMinutes: 20
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [INDUSTRY_EXCEPTION_DISCRETIONARY]
+  note: |
+    "예외 심사 가능"은 "가능"이 아니다. 심사 재량이므로 ELIGIBLE을 내면 안 된다.
+    UI에는 "출입국 심사 대상 — 관할 출입국·외국인청에 문의" 로 표시.
+
+- id: D2-INDUSTRY-003
+  description: 건설업(F41) → 한국어 급수와 무관하게 불가
+  profile:
+    visa: D2
+    degreeLevel: DOCTORATE
+    koreanProficiency: TOPIK6
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "F41"
+    employmentForm: DIRECT
+    weeklyHoursMax: 10
+    commuteMinutes: 10
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [INDUSTRY_DENIED_CONSTRUCTION]
+  note: TOPIK 6급이어도 건설업은 불가. 한국어 예외가 건설업에 새지 않는지 확인
+
+# ─────────────────────────────────────────────────────────────
+#  EMPLOYMENT_FORM_DENY  ← 실사용 빈도 최상. 물류·배달이 전부 여기 걸린다
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-FORM-001
+  description: 물류센터 파견 → 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "H52"
+    employmentForm: DISPATCH
+    weeklyHoursMax: 20
+    commuteMinutes: 25
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [EMPLOYMENT_FORM_DENIED]
+
+- id: D2-FORM-002
+  description: 배달대행 라이더 → 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK5
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    jobCategoryCode: DELIVERY_RIDER
+    employmentForm: PLATFORM
+    weeklyHoursMax: 15
+    commuteMinutes: 5
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [EMPLOYMENT_FORM_DENIED]
+
+- id: D2-FORM-003-UNKNOWN
+  description: 고용형태 미상 → 판단 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: UNKNOWN
+    weeklyHoursMax: 12
+    commuteMinutes: 10
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_POSTING_FIELD]
+
+# ─────────────────────────────────────────────────────────────
+#  PERMIT_REQUIRED  ← FAIL이 아니라 WARN (신청하면 되므로)
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-PERMIT-001
+  description: 조건은 모두 충족하나 시간제취업 허가 미보유 → 조건부
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: false
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 8
+  expect_when_verified:
+    status: CONDITIONAL
+    reasonCodes: [PERMIT_REQUIRED_PART_TIME]
+    requiredActions: [APPLY_PART_TIME_PERMIT]
+  note: 허가 미보유는 영구 불가가 아니다. INELIGIBLE로 내리면 사용자를 잘못 차단한다
+
+- id: D2-PERMIT-002
+  description: 허가 미보유 + 제조업 → 불가가 조건부를 이긴다
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK3
+    permittedWeeklyHours: 10
+    currentWeeklyHours: 0
+    hasPartTimePermit: false
+  posting:
+    ksicCode: "C29"
+    employmentForm: DIRECT
+    weeklyHoursMax: 8
+    commuteMinutes: 20
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [INDUSTRY_DENIED_MANUFACTURING, PERMIT_REQUIRED_PART_TIME]
+  note: 종합 순서 검증 — FAIL > INDETERMINATE > WARN > PASS
+
+# ─────────────────────────────────────────────────────────────
+#  COMMUTE_MAX_MINUTES  ← 🔴 자료 상충. 원문 확인 전까지 UNKNOWN
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-COMMUTE-001
+  description: 통학 75분 — 60분 기준이면 불가, 90분 기준이면 가능
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+    baseLat: 37.5967
+    baseLng: 127.0585
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 75
+  expect_with_low_confidence:
+    status: UNKNOWN
+    reasonCodes: [LOW_CONFIDENCE_RULE]
+  note: |
+    🔴 이 케이스가 통학 규칙 검증의 핵심이다.
+    자료 A(60분)와 자료 B(수도권 90분)가 정확히 갈리는 구간.
+    지침 원문 확보 전까지 반드시 UNKNOWN이어야 한다.
+
+- id: D2-COMMUTE-002-UNKNOWN
+  description: 공고 좌표 없음 → 통학 계산 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+    baseLat: 37.5967
+    baseLng: 127.0585
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: null
+    missingFields: ["workplace_coordinates"]
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_POSTING_FIELD]
+
+# ─────────────────────────────────────────────────────────────
+#  규칙 결측 / 프로필 없음
+# ─────────────────────────────────────────────────────────────
+
+- id: NO-RULES-001
+  description: 규칙이 없는 비자 → UNKNOWN
+  profile:
+    visa: F6
+    degreeLevel: NONE
+    koreanProficiency: TOPIK4
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 20
+    commuteMinutes: 10
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [NO_RULES_FOUND]
+
+- id: NO-PROFILE-001
+  description: 프로필 없음 (비로그인) → UNKNOWN, reasons는 비지 않는다
+  profile: null
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 10
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [NO_PROFILE]
+  note: reasons가 빈 배열이면 실패해야 한다 (L3)
+
+# ─────────────────────────────────────────────────────────────
+#  E-9 (MVP UI 미노출, 엔진 레벨만)
+# ─────────────────────────────────────────────────────────────
+
+- id: E9-REGION-001
+  description: 다른 권역 사업장 → 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGNAM"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [REGION_LOCKED]
+
+- id: E9-CHANGE-001
+  description: 사업장 변경 3회 소진 → 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 3
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [CHANGE_COUNT_EXCEEDED]
+
+# ─────────────────────────────────────────────────────────────
+#  불변 규칙 자체를 검증하는 메타 테스트
+# ─────────────────────────────────────────────────────────────
+
+invariantTests:
+  - id: INV-L3-001
+    description: 모든 판정 결과의 reasons는 비어 있을 수 없다
+    assert: "cases.every(c => result.reasons.length > 0)"
+
+  - id: INV-L3-002
+    description: 모든 reason에 sourceTitle과 effectiveFrom이 있다
+    assert: "result.reasons.every(r => r.sourceTitle && r.effectiveFrom)"
+
+  - id: INV-L4-001
+    description: confidence=low 규칙이 하나라도 적용되면 ELIGIBLE이 나올 수 없다
+    assert: "result.ruleSnapshot.some(r => r.confidence === 'low') ? result.status !== 'ELIGIBLE' : true"
+
+  - id: INV-L4-002
+    description: INDETERMINATE가 있으면 CONDITIONAL이 아니라 UNKNOWN이다
+    assert: "result.reasons.some(r => r.verdict === 'INDETERMINATE') && !result.reasons.some(r => r.verdict === 'FAIL') ? result.status === 'UNKNOWN' : true"
+
+  - id: INV-ORDER-001
+    description: FAIL이 있으면 항상 INELIGIBLE이다 (다른 판정으로 완화되지 않는다)
+    assert: "result.reasons.some(r => r.verdict === 'FAIL') ? result.status === 'INELIGIBLE' : true"
