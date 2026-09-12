@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "validate": "prisma validate",
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
