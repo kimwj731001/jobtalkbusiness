@@ -3,45 +3,52 @@
 `spec/DB_SCHEMA.sql` 이 정본이고, `prisma/schema.prisma` 를 거기에 맞춘다.
 스키마를 바꿀 때는 **SQL 을 먼저 고치고** Prisma 를 따라가게 한다 (CLAUDE.md 7장).
 
-## 아직 실행되지 않은 것
+## 상태
 
-마이그레이션과 시드는 **아직 한 번도 실제 DB에 적용되지 않았다.** 살아 있는 Postgres 16 이 필요하다.
-스키마는 `prisma validate` / `prisma generate` 까지만 검증된 상태다.
+Neon (`ap-southeast-1`) 에 마이그레이션 적용 + 시드 완료.
+DB 레벨 방어 20개 항목 검증 통과 (`npm run verify --workspace @jobtalk/db`).
+
+> ⚠️ `spec/DB_SCHEMA.sql` 은 PostgreSQL 16 기준이지만 실제 인스턴스는 **18.6** 이다.
+> 쓰고 있는 기능(enum, jsonb, 배열, 부분 인덱스, plpgsql, GIN FTS)은 전부 16→18 에서
+> 동작이 같아 현재 문제는 없다. 다만 스펙과 운영 환경이 다르다는 사실은 기록해 둔다.
 
 ## 설정
 
-1. Postgres 16 을 준비한다 (Supabase 또는 Neon).
-2. 리포지토리 루트에 `.env` 를 만든다:
+1. Postgres 를 준비한다 (Neon 또는 Supabase).
+2. 리포지토리 루트에 `.env` 를 만든다. `.env.example` 을 복사하면 된다.
 
    ```
-   DATABASE_URL="postgresql://...?sslmode=require"
+   DATABASE_URL="...-pooler...."   # 런타임 (서버리스 커넥션 고갈 방지)
+   DIRECT_URL="...."               # 마이그레이션 (직결)
    ```
 
    `.env` 는 `.gitignore` 에 있다. 커밋하지 않는다.
 
-3. 초기 마이그레이션을 만든다:
+   > **`DIRECT_URL` 이 따로 필요하다.** PgBouncer transaction 모드로는 Prisma Migrate 가
+   > 동작하지 않는다. Neon 은 호스트에서 `-pooler` 를 뺀 것이 직결 주소다.
+
+3. 적용하고 시드를 넣는다:
 
    ```bash
-   npx prisma migrate dev --create-only --name init --schema packages/db/prisma/schema.prisma
-   ```
-
-4. 생성된 `migration.sql` **끝에** `prisma/sql/constraints-and-triggers.sql` 내용을 붙여 넣는다.
-   Prisma 가 만들지 못하는 것들이 거기 들어 있다:
-
-   - `chk_source_legal_gate` — 로그인 필요/robots 불허/약관 금지 소스의 활성화를 DB 레벨에서 막는다 (L7)
-   - `chk_effective_range` — 규칙 유효기간 (L2)
-   - 부분 인덱스, FTS GIN 인덱스
-   - `purge_expired_raw_bodies()` — 원문 TTL 파기 (L6)
-   - `trg_source_kill_switch` — 소스를 끄면 공고가 즉시 `SUSPENDED` 가 된다
-
-   **이 단계를 건너뛰면 L6·L7 의 DB 레벨 방어가 통째로 빠진다.**
-
-5. 적용하고 시드를 넣는다:
-
-   ```bash
-   npx prisma migrate dev --schema packages/db/prisma/schema.prisma
+   npm run generate --workspace @jobtalk/db
+   npm run migrate:deploy --workspace @jobtalk/db
    npm run seed --workspace @jobtalk/db
+   npm run verify --workspace @jobtalk/db
    ```
+
+## 마이그레이션을 새로 만들 때
+
+Prisma 가 만들지 못하는 것들이 `prisma/sql/constraints-and-triggers.sql` 에 있다.
+스키마를 바꿔 새 마이그레이션을 만들면, 이 SQL 중 영향받는 부분을
+**생성된 `migration.sql` 끝에 직접 붙여 넣어야 한다.**
+
+- `chk_source_legal_gate` — 로그인 필요/robots 불허/약관 금지 소스의 활성화를 DB 레벨에서 막는다 (L7)
+- `chk_effective_range` — 규칙 유효기간 (L2)
+- 부분 인덱스, FTS GIN 인덱스
+- `purge_expired_raw_bodies()` — 원문 TTL 파기 (L6)
+- `trg_source_kill_switch` — 소스를 끄면 공고가 즉시 `SUSPENDED` 가 된다
+
+**빠뜨리면 L6·L7 의 DB 레벨 방어가 통째로 사라진다.** `npm run verify` 가 이를 잡아낸다.
 
 ## 시드 내용
 

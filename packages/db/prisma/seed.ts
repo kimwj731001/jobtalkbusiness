@@ -7,9 +7,15 @@
  * ⚠️ visa_rules 는 VISA_RULES_SEED (packages/shared) 가 정본이다.
  *    규칙을 바꿀 때 이 파일이 아니라 그쪽을 고친다.
  */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config as loadEnv } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { VISA_RULES_SEED } from '@jobtalk/shared';
 import { ruleUuid } from '../src/rule-id.ts';
+
+// 시드는 CLI 가 아니라 독립 프로세스로 돌기도 한다. .env 를 직접 읽는다.
+loadEnv({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '.env') });
 
 const prisma = new PrismaClient();
 

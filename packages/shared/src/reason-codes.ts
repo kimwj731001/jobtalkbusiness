@@ -23,8 +23,15 @@ export type EngineReasonCode = (typeof ENGINE_REASON_CODES)[number];
 /** i18n 키 프리픽스 */
 export const REASON_I18N_PREFIX = 'reason';
 
-export function reasonMessageKey(reasonCode: string): string {
-  return `${REASON_I18N_PREFIX}.${reasonCode}.message`;
+/**
+ * 사유 문구의 i18n 키.
+ *
+ * verdict 를 키에 포함시킨다. 같은 사유 코드라도 통과와 위반은 정반대 문장이기 때문이다.
+ *   reason.WEEKLY_HOUR_EXCEEDED.PASS  "주당 허용시간 내입니다"
+ *   reason.WEEKLY_HOUR_EXCEEDED.FAIL  "주당 허용시간을 초과합니다"
+ */
+export function reasonMessageKey(reasonCode: string, verdict: string): string {
+  return `${REASON_I18N_PREFIX}.${reasonCode}.${verdict}`;
 }
 
 /** 판정 응답에 반드시 실리는 고지 문구의 i18n 키 (L3) */

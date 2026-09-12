@@ -10,12 +10,16 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
+  // output 을 지정하지 않는다. 모노레포에서 @prisma/client 가 루트로 호이스팅되므로
+  // 패키지 안에 생성하면 런타임 해석이 어긋난다.
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // 런타임은 pooler 를 거친다 (서버리스에서 커넥션 고갈 방지)
+  url = env("DATABASE_URL")
+  // 마이그레이션은 직결이어야 한다. PgBouncer transaction 모드로는 Prisma Migrate 가 동작하지 않는다.
+  directUrl = env("DIRECT_URL")
 }
 
 // ─────────────────────────────────────────────────────────────

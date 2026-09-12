@@ -28,7 +28,7 @@ function engineReason(
     kind: 'ENGINE',
     reasonCode,
     verdict,
-    messageKey: reasonMessageKey(reasonCode),
+    messageKey: reasonMessageKey(reasonCode, verdict),
     params,
   };
 }
@@ -153,7 +153,7 @@ export function evaluateEligibility(
       ruleType: rule.ruleType,
       reasonCode,
       verdict,
-      messageKey: reasonMessageKey(reasonCode),
+      messageKey: reasonMessageKey(reasonCode, verdict),
       params,
       sourceTitle: rule.sourceTitle,
       sourceClause: rule.sourceClause,

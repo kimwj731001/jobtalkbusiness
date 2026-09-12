@@ -13,14 +13,17 @@
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
-    "seed": "node --experimental-strip-types prisma/seed.ts",
+    "seed": "tsx prisma/seed.ts",
+    "verify": "tsx scripts/verify.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@jobtalk/shared": "*",
-    "@prisma/client": "^6.19.0"
+    "@prisma/client": "^6.19.0",
+    "dotenv": "^16.6.1"
   },
   "devDependencies": {
-    "prisma": "^6.19.0"
+    "prisma": "^6.19.0",
+    "tsx": "^4.23.13"
   }
 }
