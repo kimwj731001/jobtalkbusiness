@@ -106,7 +106,7 @@ Vercel 은 Root Directory(`apps/web`) 기준으로 설치한다.
 
 - `prisma generate` 를 `apps/web` 의 build 스크립트에 명시한다.
   `packages/db` 의 `postinstall` 은 Vercel 설치 범위 밖이라 실행되지 않는다.
-- `tsconfig.json` 이 `__tests__` / `scripts` / `vercel.config.ts` 를 제외한다.
+- `tsconfig.json` 이 `__tests__` / `scripts` / `vitest.config.ts` 를 제외한다.
   테스트 도구는 Vercel 에 없으므로 프로덕션 빌드가 이들을 타입체크하면 깨진다.
   로컬 검사 범위는 `tsconfig.test.json` 이 유지한다.
 
