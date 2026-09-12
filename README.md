@@ -12,10 +12,11 @@
 | 1 | DB 스키마 + Prisma | 🟢 Neon 에 적용 + 시드 완료, DB 방어 20항목 검증 통과 |
 | 2 | 판정 엔진 | 🟢 구현 완료, 테스트 60개 통과 |
 | 3 | 비자 규칙 시드 | 🟡 20건 투입, 13건이 `confidence='low'` (원문 미대조) |
+| 4 | 공고 CRUD + 검색 API | 🟡 검색·판정 API 동작, 스모크 22항목 통과. 사업주 등록은 미구현 |
 | 8 | i18n (ko/en/zh-CN/vi) | 🟢 판정 근거 문구까지 4개 언어 완비 |
-| 4~7, 9~12 | 검색 API · UI · 크롤러 · 알림 | ⚪ 미착수 |
+| 5~7, 9~12 | 사업주 폼 · 온보딩 · UI · 크롤러 · 알림 | ⚪ 미착수 |
 
-`apps/web` 은 아직 없다. **배포할 애플리케이션이 존재하지 않는다.**
+`apps/web` 은 API 만 있고 화면이 없다. 배포는 가능하지만 보여줄 것이 상태 페이지뿐이다.
 
 ## 남은 최대 리스크
 
@@ -34,6 +35,7 @@ spec/                   PRD · DB 스키마(정본) · API 명세 · 비자 규�
 packages/shared/        타입, i18n 카탈로그(ko/en/zh-CN/vi), 비자 규칙 시드 데이터
 packages/eligibility/   ⚡ 판정 엔진 (순수 함수)
 packages/db/            Prisma schema, seed, DB 방어 검증 스크립트
+apps/web/               Next.js — 검색·판정 API (UI 미구현)
 ```
 
 `packages/eligibility` 는 DB·네트워크·환경변수·현재시각에 의존하지 않는다.

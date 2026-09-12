@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 export { ruleUuid } from './rule-id.js';
+export { loadVisaRules, toEngineRule } from './visa-rules.js';
 export * from '@prisma/client';
 
 /**
