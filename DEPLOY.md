@@ -90,3 +90,42 @@ SMOKE_BASE_URL=https://<배포주소> npm run smoke --workspace @jobtalk/web
 **화면은 상태 페이지 하나뿐이다.** 검색 UI 는 CLAUDE.md 5장의 7단계이고 아직 없다.
 지금 배포하는 목적은 파이프라인을 먼저 뚫어두는 것이다 —
 UI 를 만든 뒤에 배포 문제를 디버깅하는 것보다 순서가 낫다.
+
+## Vercel 설치 범위 — 빌드가 로컬에서만 되는 이유
+
+Vercel 은 Root Directory(`apps/web`) 기준으로 설치한다.
+**루트 `package.json` 의 devDependencies 는 설치되지 않는다.**
+
+로컬에서 `npm install` 을 루트에서 돌리면 전부 깔리므로 이 차이가 드러나지 않는다.
+실제로 첫 배포가 `@types/node` 없음으로 실패했다.
+
+그래서 `apps/web` 은 빌드에 필요한 것을 **직접 선언한다** — `typescript`, `@types/node`, `prisma`.
+루트에만 있는 것(`vitest` 등)에 빌드가 의존하면 안 된다.
+
+같은 이유로:
+
+- `prisma generate` 를 `apps/web` 의 build 스크립트에 명시한다.
+  `packages/db` 의 `postinstall` 은 Vercel 설치 범위 밖이라 실행되지 않는다.
+- `tsconfig.json` 이 `__tests__` / `scripts` / `vercel.config.ts` 를 제외한다.
+  테스트 도구는 Vercel 에 없으므로 프로덕션 빌드가 이들을 타입체크하면 깨진다.
+  로컬 검사 범위는 `tsconfig.test.json` 이 유지한다.
+
+### 배포 전에 이걸 재현하는 법
+
+루트가 아니라 **`apps/web` 에서** 설치해야 Vercel 과 같은 범위가 된다.
+
+```bash
+git clone <이 리포지토리> /tmp/sim
+cd /tmp/sim/apps/web
+npm install                      # 루트가 아니라 여기서
+DATABASE_URL=... DIRECT_URL=... npm run build
+```
+
+설치된 패키지 수가 Vercel 로그와 비슷하면(현재 89 vs 88) 범위가 맞은 것이다.
+루트에서 설치하면 130개가 넘고, 그건 Vercel 을 재현하지 못한 것이다.
+
+### 빌드 리전 ≠ 함수 리전
+
+빌드 로그의 `Running build in Washington, D.C., USA (East) – iad1` 은 빌드 머신 위치다.
+`vercel.json` 의 `regions` 는 배포된 **함수**가 도는 위치이고, 그쪽이 DB 지연을 결정한다.
+둘은 별개이므로 빌드 리전이 iad1 이어도 문제가 아니다.
