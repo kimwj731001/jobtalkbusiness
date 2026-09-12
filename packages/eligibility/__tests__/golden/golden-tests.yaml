@@ -399,6 +399,225 @@ cases:
     reasonCodes: [CHANGE_COUNT_EXCEEDED]
 
 # ─────────────────────────────────────────────────────────────
+#  PERMIT_REQUIRED — 3케이스 충족용 보강
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-PERMIT-003-UNKNOWN
+  description: 허가 보유 여부를 모름 → 판단 불가
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: null
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 8
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_PROFILE_FIELD]
+  note: 미입력을 "보유함"으로 간주하면 허가 없이 근무하도록 유도하게 된다
+
+# ─────────────────────────────────────────────────────────────
+#  COMMUTE_MAX_MINUTES — 경계값 보강
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-COMMUTE-003
+  description: 경계값 — 통학 60분 = 상한 60분 → 가능 (초과만 위반)
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: 60
+  expect_when_verified:
+    status: ELIGIBLE
+  note: |
+    검증 대상은 60분이라는 값이 아니라 부등호 방향이다.
+    값 자체(60 vs 90)는 여전히 미확정이며 low 모드에서는 UNKNOWN 이다.
+
+# ─────────────────────────────────────────────────────────────
+#  D-4 업종 — D-2의 TOPIK 4급 예외가 D-4로 새지 않는지
+# ─────────────────────────────────────────────────────────────
+
+- id: D4-INDUSTRY-001
+  description: D-4 + 제조업(C29) + TOPIK6 → 불가 (D-4에는 4급 예외 규칙이 없다)
+  profile:
+    visa: D4
+    degreeLevel: LANGUAGE
+    koreanProficiency: TOPIK6
+    permittedWeeklyHours: 20
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "C29"
+    employmentForm: DIRECT
+    weeklyHoursMax: 10
+    commuteMinutes: 10
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [INDUSTRY_DENIED_MANUFACTURING]
+
+# ─────────────────────────────────────────────────────────────
+#  low confidence 억제 동작 자체를 고정하는 케이스
+# ─────────────────────────────────────────────────────────────
+
+- id: D2-LOWCONF-001
+  description: 근거가 low면 명백한 불가(건설업)도 단정하지 않고 UNKNOWN 이다
+  profile:
+    visa: D2
+    degreeLevel: DOCTORATE
+    koreanProficiency: TOPIK6
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+  posting:
+    ksicCode: "F41"
+    employmentForm: DIRECT
+    weeklyHoursMax: 10
+    commuteMinutes: 10
+  expect_with_low_confidence:
+    status: UNKNOWN
+    reasonCodes: [LOW_CONFIDENCE_RULE]
+  note: |
+    설계상 의도된 동작이다 (VISA_RULES.md 1장).
+    다만 결과적으로 "불가" 경고가 사라지므로, UI는 UNKNOWN 을 안전 신호로 표시하면 안 된다.
+    원문 대조로 confidence 를 올리는 것이 유일한 해소책이다.
+
+# ─────────────────────────────────────────────────────────────
+#  E-9 REGION_LOCK / INDUSTRY_LOCK / CHANGE_COUNT_CAP
+#  (MVP UI 미노출. 엔진 레벨만 검증)
+# ─────────────────────────────────────────────────────────────
+
+- id: E9-REGION-002
+  description: 같은 권역·같은 업종·변경 1회 → 가능
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: ELIGIBLE
+
+- id: E9-REGION-003-UNKNOWN
+  description: 공고에 권역 코드가 없음 → 판단 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "C29"
+    regionCode: null
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+    missingFields: ["region_code"]
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_POSTING_FIELD]
+
+- id: E9-INDUSTRY-001
+  description: 다른 업종(C29 → I56) → 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "I56"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: INELIGIBLE
+    reasonCodes: [INDUSTRY_LOCKED]
+
+- id: E9-INDUSTRY-002
+  description: 상위 분류 포함 관계(C → C29)는 같은 업종으로 본다
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C"
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: ELIGIBLE
+  note: 실제 권역·업종 구분 코드가 확정되면 이 완화 규칙을 재검토할 것
+
+- id: E9-INDUSTRY-003-UNKNOWN
+  description: 프로필에 현재 업종이 없음 → 판단 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: null
+    workplaceChangesUsed: 1
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_PROFILE_FIELD]
+
+- id: E9-CHANGE-002
+  description: 경계값 — 변경 2회 사용(상한 3) → 가능
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: 2
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: ELIGIBLE
+  note: 소진 기준은 used >= max 다. 2회는 아직 1회가 남아 있다
+
+- id: E9-CHANGE-003-UNKNOWN
+  description: 변경 횟수를 모름 → 판단 불가
+  profile:
+    visa: E9
+    degreeLevel: NONE
+    currentRegionCode: "GYEONGGI_SOUTH"
+    currentKsicCode: "C29"
+    workplaceChangesUsed: null
+  posting:
+    ksicCode: "C29"
+    regionCode: "GYEONGGI_SOUTH"
+    employmentForm: DIRECT
+    weeklyHoursMax: 40
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_PROFILE_FIELD]
+
+# ─────────────────────────────────────────────────────────────
 #  불변 규칙 자체를 검증하는 메타 테스트
 # ─────────────────────────────────────────────────────────────
 

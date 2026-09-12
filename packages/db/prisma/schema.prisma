@@ -1,0 +1,675 @@
+// Prisma schema — spec/DB_SCHEMA.sql 이 정본이다.
+// 스키마를 바꿀 때는 DB_SCHEMA.sql 을 먼저 고치고 여기를 맞춘다 (CLAUDE.md 7장).
+//
+// DB_SCHEMA.sql 에만 있고 Prisma 로 표현되지 않는 것들 —
+// 마이그레이션 SQL 에 직접 넣어야 한다:
+//   · CHECK 제약 (chk_source_legal_gate, chk_effective_range)
+//   · 부분 인덱스 (WHERE 절이 붙은 인덱스)
+//   · FTS GIN 인덱스
+//   · purge_expired_raw_bodies() / suspend_postings_on_source_disable() 함수와 트리거
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  ENUM
+// ─────────────────────────────────────────────────────────────
+
+enum VisaCode {
+  D2
+  D4
+  E9
+  E74
+  F2
+  F4
+  F5
+  F6
+  OTHER
+
+  @@map("visa_code")
+}
+
+enum DegreeLevel {
+  LANGUAGE
+  ASSOCIATE
+  BACHELOR_1_2
+  BACHELOR_3_4
+  MASTER
+  DOCTORATE
+  NONE
+
+  @@map("degree_level")
+}
+
+enum KoreanProficiency {
+  NONE
+  TOPIK1
+  TOPIK2
+  TOPIK3
+  TOPIK4
+  TOPIK5
+  TOPIK6
+  KIIP1
+  KIIP2
+  KIIP3
+  KIIP4
+  KIIP5
+
+  @@map("korean_proficiency")
+}
+
+enum EmploymentForm {
+  DIRECT
+  DISPATCH
+  SUBCONTRACT
+  PLATFORM
+  UNKNOWN
+
+  @@map("employment_form")
+}
+
+enum EligibilityStatus {
+  ELIGIBLE
+  CONDITIONAL
+  INELIGIBLE
+  UNKNOWN
+
+  @@map("eligibility_status")
+}
+
+enum SourceRiskGrade {
+  C
+  B
+  A
+  S
+
+  @@map("source_risk_grade")
+}
+
+enum SourceKind {
+  PUBLIC_API
+  CRAWL
+  EMPLOYER_DIRECT
+  USER_SUBMISSION
+
+  @@map("source_kind")
+}
+
+enum PostingStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  TAKEDOWN
+
+  @@map("posting_status")
+}
+
+enum RuleConfidence {
+  high
+  medium
+  low
+
+  @@map("rule_confidence")
+}
+
+enum RuleType {
+  WEEKLY_HOUR_CAP
+  INDUSTRY_ALLOW
+  INDUSTRY_DENY
+  EMPLOYMENT_FORM_DENY
+  COMMUTE_MAX_MINUTES
+  PERMIT_REQUIRED
+  REGION_LOCK
+  INDUSTRY_LOCK
+  KOREAN_LEVEL_MIN
+  CHANGE_COUNT_CAP
+
+  @@map("rule_type")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  1. 수집 소스 — 킬스위치의 단위 (L7)
+// ─────────────────────────────────────────────────────────────
+
+model Source {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  kind      SourceKind
+  riskGrade SourceRiskGrade @map("risk_grade")
+  baseUrl   String?         @map("base_url")
+
+  /// 법적 통지 수령 시 이 한 줄만 false 로 바꾸면 즉시 중단된다
+  enabled        Boolean   @default(false)
+  disabledReason String?   @map("disabled_reason")
+  disabledAt     DateTime? @map("disabled_at") @db.Timestamptz(6)
+
+  robotsCheckedAt   DateTime? @map("robots_checked_at") @db.Timestamptz(6)
+  robotsAllows      Boolean?  @map("robots_allows")
+  tosReviewedAt     DateTime? @map("tos_reviewed_at") @db.Timestamptz(6)
+  tosProhibitsCrawl Boolean?  @map("tos_prohibits_crawl")
+  requiresLogin     Boolean   @default(false) @map("requires_login")
+  legalNote         String?   @map("legal_note")
+
+  minIntervalMs  Int @default(3000) @map("min_interval_ms")
+  maxConcurrency Int @default(1) @map("max_concurrency") @db.SmallInt
+
+  crawlConfig Json     @default("{}") @map("crawl_config")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  crawlRuns        CrawlRun[]
+  rawPostings      RawPosting[]
+  postings         Posting[]
+  takedownRequests TakedownRequest[]
+
+  @@index([enabled])
+  @@map("sources")
+}
+
+model CrawlRun {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceId     String    @map("source_id") @db.Uuid
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt   DateTime? @map("finished_at") @db.Timestamptz(6)
+  status       String    @default("RUNNING")
+  fetchedCount Int       @default(0) @map("fetched_count")
+  newCount     Int       @default(0) @map("new_count")
+  errorMessage String?   @map("error_message")
+
+  source      Source       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  rawPostings RawPosting[]
+
+  @@index([sourceId, startedAt(sort: Desc)])
+  @@map("crawl_runs")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  2. 원문 격리 — L6. body 는 TTL 경과 후 NULL 처리한다
+// ─────────────────────────────────────────────────────────────
+
+model RawPosting {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceId   String  @map("source_id") @db.Uuid
+  crawlRunId String? @map("crawl_run_id") @db.Uuid
+
+  /// 영구 보관 (링크아웃용)
+  sourceUrl String @map("source_url")
+  /// 영구 보관 (중복 판정용)
+  contentHash String @map("content_hash")
+
+  /// L6: purgeAfter 경과 시 NULL 처리 필수. 사용자에게 노출 금지.
+  titleRaw String? @map("title_raw")
+  /// L6: purgeAfter 경과 시 NULL 처리 필수. 사용자에게 노출 금지.
+  bodyRaw String? @map("body_raw")
+
+  /// L8: LLM 전송 전 개인정보 마스킹 완료 여부
+  piiMasked  Boolean   @default(false) @map("pii_masked")
+  fetchedAt  DateTime  @default(now()) @map("fetched_at") @db.Timestamptz(6)
+  purgeAfter DateTime  @default(dbgenerated("(now() + interval '7 days')")) @map("purge_after") @db.Timestamptz(6)
+  purgedAt   DateTime? @map("purged_at") @db.Timestamptz(6)
+
+  source   Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  crawlRun CrawlRun? @relation(fields: [crawlRunId], references: [id], onDelete: SetNull)
+  postings Posting[]
+
+  @@unique([sourceId, contentHash])
+  @@index([purgeAfter])
+  @@map("raw_postings")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  3. 업종 / 직무
+// ─────────────────────────────────────────────────────────────
+
+model Industry {
+  ksicCode   String  @id @map("ksic_code")
+  nameKo     String  @map("name_ko")
+  nameEn     String? @map("name_en")
+  parentCode String? @map("parent_code")
+  level      Int     @db.SmallInt
+
+  parent   Industry?     @relation("IndustryTree", fields: [parentCode], references: [ksicCode])
+  children Industry[]    @relation("IndustryTree")
+  jobs     JobCategory[]
+  postings Posting[]
+
+  @@map("industries")
+}
+
+model JobCategory {
+  code      String  @id
+  nameKo    String  @map("name_ko")
+  nameEn    String? @map("name_en")
+  nameZh    String? @map("name_zh")
+  nameVi    String? @map("name_vi")
+  ksicHint  String? @map("ksic_hint")
+
+  industry Industry? @relation(fields: [ksicHint], references: [ksicCode])
+  postings Posting[]
+
+  @@map("job_categories")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  4. 사업주 / 사업장
+// ─────────────────────────────────────────────────────────────
+
+model Employer {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String
+
+  /// 사업자등록번호는 해시만 보관한다. 평문 저장 금지.
+  bizRegNoHash String? @map("biz_reg_no_hash")
+  contactEmail String? @map("contact_email")
+  contactPhone String? @map("contact_phone")
+  isVerified   Boolean @default(false) @map("is_verified")
+  verifiedAt   DateTime? @map("verified_at") @db.Timestamptz(6)
+
+  /// 직업안정법: 명단 공개 중인 체불사업주의 구인정보는 그 사실을 알 수 있게 게재해야 한다
+  isWageArrears   Boolean @default(false) @map("is_wage_arrears")
+  wageArrearsNote String? @map("wage_arrears_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workplaces Workplace[]
+  postings   Posting[]
+
+  @@map("employers")
+}
+
+model Workplace {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employerId String? @map("employer_id") @db.Uuid
+  address    String?
+  sido       String?
+  sigungu    String?
+  /// E-9 권역 판정용 (REGION_LOCK 규칙이 참조)
+  regionCode String? @map("region_code")
+  lat        Float?
+  lng        Float?
+
+  employer Employer? @relation(fields: [employerId], references: [id], onDelete: Cascade)
+  postings Posting[]
+
+  @@index([lat, lng])
+  @@index([regionCode])
+  @@map("workplaces")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  5. 공고 — 판정 엔진의 입력
+// ─────────────────────────────────────────────────────────────
+
+model Posting {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceId     String  @map("source_id") @db.Uuid
+  rawPostingId String? @map("raw_posting_id") @db.Uuid
+  employerId   String? @map("employer_id") @db.Uuid
+  workplaceId  String? @map("workplace_id") @db.Uuid
+
+  status PostingStatus @default(ACTIVE)
+
+  title String
+  /// LLM 생성 3줄 요약. 원문 전문이 아니다 (L6)
+  summary String?
+  /// 링크아웃 대상 (필수)
+  sourceUrl String @map("source_url")
+
+  // ── 판정 입력 필드 ──
+  ksicCode        String?           @map("ksic_code")
+  jobCategoryCode String?           @map("job_category_code")
+  employmentForm  EmploymentForm    @default(UNKNOWN) @map("employment_form")
+  weeklyHoursMin  Decimal?          @map("weekly_hours_min") @db.Decimal(4, 1)
+  weeklyHoursMax  Decimal?          @map("weekly_hours_max") @db.Decimal(4, 1)
+  hourlyWageKrw   Int?              @map("hourly_wage_krw")
+  /// 월급 → 시급 환산 시 true
+  wageIsEstimated Boolean           @default(false) @map("wage_is_estimated")
+  koreanRequired  KoreanProficiency @default(NONE) @map("korean_required")
+  // ────────────────────
+
+  schedule      Json    @default("[]")
+  isNightShift  Boolean @default(false) @map("is_night_shift")
+  isWeekendOnly Boolean @default(false) @map("is_weekend_only")
+
+  // E-9/E-7-4 전용 (MVP UI 미노출, 스키마만 준비)
+  hasDormitory     Boolean? @map("has_dormitory")
+  dormitoryCostKrw Int?     @map("dormitory_cost_krw")
+  hasShuttleBus    Boolean? @map("has_shuttle_bus")
+  shuttleRoutes    String[] @map("shuttle_routes")
+  shiftPattern     String?  @map("shift_pattern")
+
+  statedVisas VisaCode[] @map("stated_visas")
+
+  hasDiscriminatoryTerms Boolean @default(false) @map("has_discriminatory_terms")
+  discriminatoryNote     String? @map("discriminatory_note")
+
+  extractionConfidence Decimal? @map("extraction_confidence") @db.Decimal(3, 2)
+  extractedBy          String?  @map("extracted_by")
+  /// 결측 필드 → UNKNOWN 사유
+  missingFields String[] @default([]) @map("missing_fields")
+
+  postedAt    DateTime? @map("posted_at") @db.Timestamptz(6)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  source       Source       @relation(fields: [sourceId], references: [id])
+  rawPosting   RawPosting?  @relation(fields: [rawPostingId], references: [id], onDelete: SetNull)
+  employer     Employer?    @relation(fields: [employerId], references: [id], onDelete: SetNull)
+  workplace    Workplace?   @relation(fields: [workplaceId], references: [id], onDelete: SetNull)
+  industry     Industry?    @relation(fields: [ksicCode], references: [ksicCode])
+  jobCategory  JobCategory? @relation(fields: [jobCategoryCode], references: [code])
+
+  translations  PostingTranslation[]
+  evaluations   EligibilityEvaluation[]
+  notifications Notification[]
+  reports       PostingReport[]
+  takedowns     TakedownRequest[]
+
+  @@index([status, lastSeenAt(sort: Desc)])
+  @@index([ksicCode])
+  @@index([hourlyWageKrw])
+  @@index([weeklyHoursMax])
+  @@index([sourceId])
+  @@map("postings")
+}
+
+model PostingTranslation {
+  postingId    String   @map("posting_id") @db.Uuid
+  locale       String
+  title        String
+  summary      String?
+  translatedAt DateTime @default(now()) @map("translated_at") @db.Timestamptz(6)
+
+  posting Posting @relation(fields: [postingId], references: [id], onDelete: Cascade)
+
+  @@id([postingId, locale])
+  @@map("posting_translations")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  6. 비자 규칙 — 이 제품의 핵심 자산. 코드가 아니라 데이터다 (L2)
+// ─────────────────────────────────────────────────────────────
+
+/// L2: 비자 규칙의 유일한 정본. 판정 로직에 비자 조건 if 문을 넣지 말 것.
+model VisaRule {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  visa        VisaCode
+  visaSubtype String?  @map("visa_subtype")
+  ruleType    RuleType @map("rule_type")
+
+  appliesWhen Json @default("{}") @map("applies_when")
+  value       Json
+
+  violationStatus EligibilityStatus @default(INELIGIBLE) @map("violation_status")
+
+  // 근거 (L3 — 판정 응답에 그대로 실린다)
+  sourceTitle   String  @map("source_title")
+  sourceClause  String? @map("source_clause")
+  sourceUrl     String? @map("source_url")
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+
+  /// L4: 'low' 인 규칙은 판정 시 UNKNOWN 을 유발한다
+  confidence RuleConfidence @default(low)
+  /// i18n 키
+  reasonCode String         @map("reason_code")
+  note       String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  reviews RuleReview[]
+
+  @@index([visa, ruleType, effectiveFrom])
+  @@map("visa_rules")
+}
+
+/// 전문가(행정사·노무사) 검수 기록. 분쟁 시 방어 자료이자 confidence 승급의 전제다.
+model RuleReview {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  visaRuleId   String   @map("visa_rule_id") @db.Uuid
+  reviewerName String   @map("reviewer_name")
+  reviewerRole String?  @map("reviewer_role")
+  reviewedAt   DateTime @default(now()) @map("reviewed_at") @db.Timestamptz(6)
+  verdict      String
+  comment      String?
+
+  visaRule VisaRule @relation(fields: [visaRuleId], references: [id], onDelete: Cascade)
+
+  @@map("rule_reviews")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  7. 사용자 / 비자 프로필 — L5: 식별번호 컬럼 없음
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String?   @unique
+  locale      String    @default("ko")
+  /// ISO 3166-1 alpha-2. 통계·언어 우선순위용
+  nationality String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  visaProfiles      VisaProfile[]
+  savedFilters      SavedFilter[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  postingReports    PostingReport[]
+
+  @@map("users")
+}
+
+model School {
+  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameKo  String  @map("name_ko")
+  nameEn  String? @map("name_en")
+  campus  String?
+  address String?
+  lat     Float?
+  lng     Float?
+
+  visaProfiles VisaProfile[]
+
+  @@map("schools")
+}
+
+/// L5: 외국인등록번호·여권번호 컬럼을 절대 추가하지 말 것. 비자 종류와 학위과정만 보관.
+model VisaProfile {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  visa              VisaCode
+  visaSubtype       String?           @map("visa_subtype")
+  degreeLevel       DegreeLevel       @default(NONE) @map("degree_level")
+  koreanProficiency KoreanProficiency @default(NONE) @map("korean_proficiency")
+
+  schoolId String? @map("school_id") @db.Uuid
+  /// 통학 시간 계산의 출발점 (학교 또는 거주지)
+  baseLat  Float?  @map("base_lat")
+  baseLng  Float?  @map("base_lng")
+
+  permittedWeeklyHours Decimal? @map("permitted_weekly_hours") @db.Decimal(4, 1)
+  currentWeeklyHours   Decimal  @default(0) @map("current_weekly_hours") @db.Decimal(4, 1)
+  hasPartTimePermit    Boolean  @default(false) @map("has_part_time_permit")
+
+  // E-9 전용
+  currentRegionCode    String? @map("current_region_code")
+  currentKsicCode      String? @map("current_ksic_code")
+  workplaceChangesUsed Int?    @map("workplace_changes_used") @db.SmallInt
+
+  isComplete Boolean  @default(false) @map("is_complete")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  school      School?                 @relation(fields: [schoolId], references: [id])
+  evaluations EligibilityEvaluation[]
+
+  @@index([userId])
+  @@map("visa_profiles")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  8. 판정 결과 — 근거·규칙 스냅샷과 함께 저장 (L3)
+// ─────────────────────────────────────────────────────────────
+
+model EligibilityEvaluation {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postingId     String  @map("posting_id") @db.Uuid
+  visaProfileId String? @map("visa_profile_id") @db.Uuid
+
+  /// 익명 판정(로그인 전) 지원용 프로필 지문
+  profileFingerprint String? @map("profile_fingerprint")
+
+  status EligibilityStatus
+
+  /// 판정 근거 (L3). 비어 있으면 버그다.
+  reasons Json @default("[]")
+  /// 적용된 규칙의 스냅샷. 규칙이 바뀌어도 당시 판정을 재현할 수 있어야 한다 (L2)
+  ruleSnapshot Json @default("[]") @map("rule_snapshot")
+
+  commuteMinutes  Int?     @map("commute_minutes")
+  remainingHours  Decimal? @map("remaining_hours") @db.Decimal(4, 1)
+  requiredActions String[] @default([]) @map("required_actions")
+
+  engineVersion String   @map("engine_version")
+  evaluatedAt   DateTime @default(now()) @map("evaluated_at") @db.Timestamptz(6)
+
+  posting     Posting      @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  visaProfile VisaProfile? @relation(fields: [visaProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([postingId, visaProfileId])
+  @@index([postingId, status])
+  @@index([visaProfileId, status])
+  @@map("eligibility_evaluations")
+}
+
+/// 외부 경로 API 비용 절감용 캐시
+model CommuteCache {
+  originLat      Float    @map("origin_lat")
+  originLng      Float    @map("origin_lng")
+  destLat        Float    @map("dest_lat")
+  destLng        Float    @map("dest_lng")
+  transitMinutes Int      @map("transit_minutes")
+  provider       String
+  cachedAt       DateTime @default(now()) @map("cached_at") @db.Timestamptz(6)
+
+  @@id([originLat, originLng, destLat, destLng])
+  @@map("commute_cache")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  9. 저장 조건 / 알림
+// ─────────────────────────────────────────────────────────────
+
+model SavedFilter {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  name        String?
+  criteria    Json
+  notifyWeb   Boolean   @default(true) @map("notify_web")
+  notifyEmail Boolean   @default(false) @map("notify_email")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastRunAt   DateTime? @map("last_run_at") @db.Timestamptz(6)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@map("saved_filters")
+}
+
+model Notification {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  savedFilterId String?   @map("saved_filter_id") @db.Uuid
+  postingId     String?   @map("posting_id") @db.Uuid
+  channel       String
+  sentAt        DateTime? @map("sent_at") @db.Timestamptz(6)
+  clickedAt     DateTime? @map("clicked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  savedFilter SavedFilter? @relation(fields: [savedFilterId], references: [id], onDelete: SetNull)
+  posting     Posting?     @relation(fields: [postingId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  endpoint  String   @unique
+  keys      Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
+}
+
+// ─────────────────────────────────────────────────────────────
+//  10. 리스크 관리 — takedown / 신고
+// ─────────────────────────────────────────────────────────────
+
+model TakedownRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceId      String?   @map("source_id") @db.Uuid
+  postingId     String?   @map("posting_id") @db.Uuid
+  requester     String
+  requesterType String?   @map("requester_type")
+  claimType     String    @map("claim_type")
+  body          String
+  receivedAt    DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  /// SLA 24시간
+  actedAt     DateTime? @map("acted_at") @db.Timestamptz(6)
+  actionTaken String?   @map("action_taken")
+  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  source  Source?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  posting Posting? @relation(fields: [postingId], references: [id], onDelete: SetNull)
+
+  @@index([receivedAt])
+  @@map("takedown_requests")
+}
+
+model PostingReport {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postingId  String    @map("posting_id") @db.Uuid
+  userId     String?   @map("user_id") @db.Uuid
+  reason     String
+  detail     String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  posting Posting @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("posting_reports")
+}
+
+/// 규칙 변경·소스 활성화 등 민감 조작의 감사 로그
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  actor     String
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("audit_logs")
+}
