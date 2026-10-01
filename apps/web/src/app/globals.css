@@ -1,1 +1,68 @@
 @import 'tailwindcss';
+
+/**
+ * 디자인 토큰.
+ *
+ * 구인 서비스의 흔한 패턴(카드 리스트, 시급 강조, 태그 칩)을 따르되
+ * 채도를 낮췄다. 이 화면은 "싸게 잘 골라라"가 아니라
+ * "이거 해도 합법이냐"에 답하는 곳이라 톤이 가벼우면 신뢰가 깎인다.
+ *
+ * 색은 의미다:
+ *   danger   확정된 제한 — 이 공고는 불가
+ *   caution  가능성 — 미검증 근거나 심사 재량
+ *   muted    정보 부족 — 우리가 모르는 것
+ * 통과를 뜻하는 초록은 팔레트에 두지 않는다. 지금은 낼 수 없는 판정이고,
+ * 색이 있으면 언젠가 쓰게 된다.
+ */
+@theme {
+  --color-ink: oklch(0.22 0.01 265);
+  --color-ink-soft: oklch(0.45 0.01 265);
+  --color-ink-faint: oklch(0.62 0.01 265);
+
+  --color-surface: oklch(1 0 0);
+  --color-canvas: oklch(0.985 0.003 265);
+  --color-line: oklch(0.92 0.004 265);
+  --color-line-strong: oklch(0.86 0.005 265);
+
+  --color-brand: oklch(0.45 0.09 200);
+  --color-brand-soft: oklch(0.96 0.02 200);
+  --color-brand-line: oklch(0.88 0.04 200);
+
+  --color-danger: oklch(0.52 0.18 22);
+  --color-danger-soft: oklch(0.97 0.02 22);
+  --color-danger-line: oklch(0.89 0.06 22);
+
+  --color-caution: oklch(0.55 0.12 70);
+  --color-caution-soft: oklch(0.97 0.03 80);
+  --color-caution-line: oklch(0.89 0.07 80);
+
+  --radius-card: 0.875rem;
+}
+
+html {
+  background: var(--color-canvas);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  color: var(--color-ink);
+  font-family:
+    'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic',
+    'Segoe UI', system-ui, sans-serif;
+  /* 한국어·중국어·베트남어가 섞여 나오므로 자간을 조금 준다 */
+  letter-spacing: -0.01em;
+}
+
+/* 숫자를 세로로 맞춘다 — 시급·시간이 카드마다 흔들리면 비교가 안 된다 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

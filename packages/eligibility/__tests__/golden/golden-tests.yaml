@@ -434,6 +434,8 @@ cases:
     permittedWeeklyHours: 30
     currentWeeklyHours: 0
     hasPartTimePermit: true
+    baseLat: 37.5967
+    baseLng: 127.0585
   posting:
     ksicCode: "I56"
     employmentForm: DIRECT
@@ -444,6 +446,52 @@ cases:
   note: |
     검증 대상은 60분이라는 값이 아니라 부등호 방향이다.
     값 자체(60 vs 90)는 여전히 미확정이며 low 모드에서는 UNKNOWN 이다.
+
+- id: D2-COMMUTE-004
+  description: 기준 위치가 없으면 통학 규칙을 적용하지 않는다
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+    baseLat: null
+    baseLng: null
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: null
+  expect_when_verified:
+    status: ELIGIBLE
+  note: |
+    학교·거주지를 모르면 통학 시간이라는 개념이 성립하지 않는다.
+    규칙을 걸어 두고 판단 불가를 내면 모든 공고에 같은 사유가 붙어 신호가 되지 못한다.
+    이건 "제한을 빠뜨리는" 것과 다르다 — D2-COMMUTE-002 가 그 경계를 지킨다.
+
+- id: D2-COMMUTE-005-UNKNOWN
+  description: 기준 위치는 있는데 소요시간을 못 구하면 판단 불가다
+  profile:
+    visa: D2
+    degreeLevel: BACHELOR_3_4
+    koreanProficiency: TOPIK4
+    permittedWeeklyHours: 30
+    currentWeeklyHours: 0
+    hasPartTimePermit: true
+    baseLat: 37.5967
+    baseLng: 127.0585
+  posting:
+    ksicCode: "I56"
+    employmentForm: DIRECT
+    weeklyHoursMax: 12
+    commuteMinutes: null
+  expect_when_verified:
+    status: UNKNOWN
+    reasonCodes: [MISSING_POSTING_FIELD]
+  note: |
+    D2-COMMUTE-004 와 짝이다. 기준 위치가 생기는 순간 통학은 "모르는 것"이 되고,
+    모르는 것을 통과시키면 L4 위반이다. 미적용과 판단 불가를 가르는 선이 여기다.
 
 # ─────────────────────────────────────────────────────────────
 #  D-4 업종 — D-2의 TOPIK 4급 예외가 D-4로 새지 않는지

@@ -8,6 +8,7 @@ import {
   type VisaProfile,
 } from '@jobtalk/eligibility';
 import { E9_NO_BROKERAGE_I18N_KEY, formatMessage, type Locale } from '@jobtalk/shared';
+import { sortRank, toBadge, toSignals } from './signals';
 
 /**
  * MVP 범위는 수도권 대학가다 (CLAUDE.md 1장).
@@ -107,17 +108,55 @@ export async function loadRulesFor(profile: VisaProfile | null, context: Evaluat
   return loadVisaRules(prisma, { visa: profile.visa, on: new Date(context.evaluatedOn) });
 }
 
+/**
+ * 사유 문구에 끼워 넣는 값 중 내부 코드인 것들을 번역한다.
+ *
+ * 엔진은 'DISPATCH' 같은 enum 을 params 에 그대로 담는다 — 엔진은 언어를 모르니 맞다.
+ * 다만 그게 문장에 그대로 박히면 사용자는 읽을 수 없다.
+ * i18n 키가 있는 값만 바꾸고, 없으면 원래 값을 둔다.
+ */
+const TRANSLATABLE_PARAMS: Record<string, string> = {
+  employmentForm: 'employmentForm',
+  requiredLevel: 'korean',
+  actualLevel: 'korean',
+  exceptionKoreanLevel: 'korean',
+  userLevel: 'korean',
+};
+
+function localizeParams(
+  params: Record<string, unknown>,
+  locale: Locale,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...params };
+  for (const [key, prefix] of Object.entries(TRANSLATABLE_PARAMS)) {
+    const value = params[key];
+    if (typeof value !== 'string') continue;
+    const translated = formatMessage(`${prefix}.${value}`, {}, locale);
+    // formatMessage 는 키가 없으면 키 자체를 돌려준다 — 그때는 바꾸지 않는다
+    if (translated !== `${prefix}.${value}`) out[key] = translated;
+  }
+  return out;
+}
+
 /** API 응답용 — 엔진 결과에 번역된 문구를 입힌다 (L3: 근거는 읽을 수 있어야 근거다) */
 export function localizeResult(result: EligibilityResult, locale: Locale) {
   return {
     status: result.status,
+    /** 화면에 쓰는 2단계 배지. status 를 좁히기만 하고 새로 만들지 않는다 */
+    badge: toBadge(result.status),
+    /** 왜 그 배지인지를 말하는 칩. 통과를 뜻하는 칩은 나오지 않는다 */
+    signals: toSignals(result).map((signal) => ({
+      code: signal.code,
+      tone: signal.tone,
+      label: formatMessage(signal.code, localizeParams(signal.params, locale), locale),
+    })),
     reasons: result.reasons.map((reason) => ({
       kind: reason.kind,
       ruleId: reason.kind === 'RULE' ? reason.ruleId : null,
       ruleType: reason.kind === 'RULE' ? reason.ruleType : null,
       reasonCode: reason.reasonCode,
       verdict: reason.verdict,
-      message: formatMessage(reason.messageKey, reason.params, locale),
+      message: formatMessage(reason.messageKey, localizeParams(reason.params, locale), locale),
       messageKey: reason.messageKey,
       params: reason.params,
       sourceTitle: reason.kind === 'RULE' ? reason.sourceTitle : null,

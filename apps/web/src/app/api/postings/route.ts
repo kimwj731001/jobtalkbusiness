@@ -14,6 +14,7 @@ import {
   toPostingFacts,
 } from '@/lib/evaluation';
 import { ELIGIBILITY_STATUSES } from '@jobtalk/shared';
+import { sortRank } from '@/lib/signals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -128,6 +129,8 @@ export async function GET(request: Request) {
 
       return {
         id: posting.id,
+        /** 카드 정렬용. 배지가 2단계뿐이라 순서가 추천을 만든다 */
+        rank: sortRank(result),
         title: translation?.title ?? posting.title,
         // L6 — 요약만 내보낸다. 원문 전문은 응답에 싣지 않는다. 상세는 sourceUrl 링크아웃.
         summary: translation?.summary ?? posting.summary,
@@ -159,8 +162,15 @@ export async function GET(request: Request) {
       ? items
       : items.filter((item) => query.eligibility!.includes(item.eligibility.status));
 
+  /**
+   * 판정이 거의 전부 UNKNOWN 이라 status 만으로는 줄을 세울 수 없다.
+   * 칩의 심각도(rank)를 1순위로 두고, 같은 등급 안에서만 사용자가 고른 정렬을 적용한다.
+   * 지침 원문이 대조되어 ELIGIBLE 이 나오기 시작하면 이 보정은 자연히 약해진다.
+   */
+  const ranked = [...filtered].sort((a, b) => a.rank - b.rank);
+
   return NextResponse.json({
-    items: filtered,
+    items: ranked,
     nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
     eligibilityFilterApplied: query.eligibility != null,
   });

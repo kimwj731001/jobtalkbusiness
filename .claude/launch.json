@@ -1,0 +1,28 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "C:/Program Files/nodejs/npm.cmd",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "@jobtalk/web"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "vivecoding",
+      "runtimeExecutable": "C:/Program Files/nodejs/npm.cmd",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "C:/Users/kimhojin/Desktop/jobtalk-vivecoding"
+      ],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

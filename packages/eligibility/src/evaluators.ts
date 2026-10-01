@@ -145,9 +145,21 @@ const employmentFormDeny: RuleEvaluator = (rule, posting) => {
   return pass(params);
 };
 
-const commuteMaxMinutes: RuleEvaluator = (rule, posting) => {
+const commuteMaxMinutes: RuleEvaluator = (rule, posting, profile) => {
   const limit = rule.value.minutes;
   if (limit == null) return indeterminate(MALFORMED_RULE_VALUE, { field: 'minutes' });
+
+  /**
+   * 기준 위치(학교 또는 거주지)가 없으면 통학 시간이라는 개념 자체가 성립하지 않는다.
+   * 규칙을 적용해 놓고 "판단 불가"를 내면 모든 공고에 같은 사유가 붙어
+   * 신호가 되지 못하므로, 이 경우는 규칙 미적용으로 둔다.
+   *
+   * ⚠️ 기준 위치가 있는데 소요시간을 못 구한 경우는 아래에서 판단 불가로 남긴다.
+   *    그때는 실제로 모르는 것이고, 모르는 것을 통과시키면 L4 위반이다.
+   */
+  if (profile.baseLat == null || profile.baseLng == null) {
+    return { verdict: 'NOT_APPLICABLE' };
+  }
 
   if (posting.commuteMinutes == null) {
     return indeterminate(MISSING_POSTING_FIELD, { field: 'commute_minutes', limitMinutes: limit });

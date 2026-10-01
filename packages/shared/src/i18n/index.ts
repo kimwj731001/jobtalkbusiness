@@ -2,16 +2,22 @@ import { ko } from './messages/ko.js';
 import { en } from './messages/en.js';
 import { zhCN } from './messages/zh-CN.js';
 import { vi } from './messages/vi.js';
+import { SIGNAL_MESSAGES } from './messages/signals.js';
+import { UI_MESSAGES } from './messages/ui.js';
 import { DEFAULT_LOCALE, type Locale, type MessageCatalog } from './locales.js';
 
 export { LOCALES, DEFAULT_LOCALE } from './locales.js';
 export type { Locale, MessageCatalog } from './locales.js';
 
+/**
+ * 판정 사유 문구(locale 파일)와 카드 칩 문구(signals)를 합친다.
+ * 둘을 나눠 두는 이유는 성격이 달라서다 — 사유는 문장이고 칩은 라벨이다.
+ */
 export const MESSAGES: Record<Locale, MessageCatalog> = {
-  ko,
-  en,
-  'zh-CN': zhCN,
-  vi,
+  ko: { ...ko, ...SIGNAL_MESSAGES.ko, ...UI_MESSAGES.ko },
+  en: { ...en, ...SIGNAL_MESSAGES.en, ...UI_MESSAGES.en },
+  'zh-CN': { ...zhCN, ...SIGNAL_MESSAGES['zh-CN'], ...UI_MESSAGES['zh-CN'] },
+  vi: { ...vi, ...SIGNAL_MESSAGES.vi, ...UI_MESSAGES.vi },
 };
 
 /**
